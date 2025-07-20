@@ -22,6 +22,9 @@ const (
 	eac3Codec    = "E-AC-3"
 	aacCodec     = "AAC"
 	aacBitrate   = "256k"
+	defaultLang  = "eng"
+	mkvAudioType = "audio"
+	mkvSubType   = "subtitles"
 )
 
 // trackInfo holds information about a track from mkvmerge.
@@ -51,9 +54,9 @@ func checkRequirements() error {
 	return nil
 }
 
-// readAudioTracks returns a map of audio tracks in the input file using
+// readTracks returns a map of all tracks in the input file using
 // mkvmerge --identify.
-func readAudioTracks(inputFile string) ([]trackInfo, error) {
+func readTracks(inputFile string) ([]trackInfo, error) {
 	// Get track information using mkvmerge.
 	cmd := exec.Command("mkvmerge", "--identify", "-F", "json", inputFile)
 	output, err := cmd.Output()
@@ -66,33 +69,41 @@ func readAudioTracks(inputFile string) ([]trackInfo, error) {
 		return []trackInfo{}, fmt.Errorf("error parsing mkvmerge JSON output: %w", err)
 	}
 
-	audioTracks := []trackInfo{}
-
-	log.Println("List of audio tracks:")
+	tracks := []trackInfo{}
 	for _, track := range info.Tracks {
-		if track.Type == "audio" {
-			log.Printf("  - ID: %d, Codec: %s, Language: %s", track.ID, track.CodecID, track.Properties.Language)
-			t := trackInfo{
-				ID:         track.ID,
-				Type:       track.Type,
-				CodecID:    track.CodecID,
-				Properties: track.Properties,
-			}
-			audioTracks = append(audioTracks, t)
+		t := trackInfo{
+			ID:         track.ID,
+			Type:       track.Type,
+			CodecID:    track.CodecID,
+			Properties: track.Properties,
 		}
+		tracks = append(tracks, t)
 	}
 
-	return audioTracks, nil
+	return tracks, nil
 }
 
 func filterAudioTracks(tracks []trackInfo, codec string) []trackInfo {
-	var filteredTracks []trackInfo
+	var ret []trackInfo
 	for _, track := range tracks {
-		if track.CodecID == codec {
-			filteredTracks = append(filteredTracks, track)
+		if track.Type == mkvAudioType && track.CodecID == codec {
+			ret = append(ret, track)
 		}
 	}
-	return filteredTracks
+	return ret
+}
+
+func langAndDisposition(track trackInfo) (string, string) {
+	lang := "und"
+	disposition := "-default"
+
+	if track.Properties.Language != "" {
+		lang = track.Properties.Language
+	}
+	if lang == defaultLang {
+		disposition = "default"
+	}
+	return lang, disposition
 }
 
 // transcoderCmd creates an ffmpeg command to transcode EAC3 tracks to AAC
@@ -105,37 +116,63 @@ func TranscoderCmd(inputFile string, outputFile string, tracks []trackInfo) []st
 		"-stats",
 		"-i", inputFile,
 		"-c:v", "copy", // Default codec for video = copy.
-		"-c:s", "copy", // Default codec for subtitles = copy.
-		"-map", "0:v", "-c:v", "copy", // Copy all video tracks first.
+		"-map", "0:v", // Copy all video tracks first.
 		"-map_chapters", "0", // Copy all chapters
 		"-map_metadata", "0", // Copy all metadata
 	}
 
-	// Add AAC conversion for each EAC3 track and copy all other audio codecs.
-	// Keep in mind that the -map command uses the INPUT track number
-	// while the -c:a:TRACK command uses the relative OUTPUT track number.
-	outtrack := 0
+	// Add AAC conversion for each EAC3 track.
+	// Copy non-EAC3 audio tracks directly.
+	// Copy subtitle tracks directly.
+	// Set the default flag on "eng" tracks.
+
+	// IMPORTANT: The -map command uses the INPUT track number while the
+	// -c:a:TRACK command uses the relative OUTPUT track number.
+	audiotrack := 0
+	subtrack := 0
+
+	// Run first for audio tracks, then subtitle tracks so we maintain the
+	// A/V/S order in the output file.
 	for _, track := range tracks {
-		args = append(args, "-map", fmt.Sprintf("0:%d", track.ID))
-		lang := track.Properties.Language
-		if lang == "" {
-			lang = "und"
+		if track.Type != mkvAudioType {
+			continue
 		}
 
+		lang, disposition := langAndDisposition(track)
+
+		// Map track for output.
+		args = append(args, "-map", fmt.Sprintf("0:%d", track.ID))
+
+		// Transcode or copy.
 		if track.CodecID == eac3Codec {
 			args = append(args,
-				fmt.Sprintf("-c:a:%d", outtrack), "aac",
-				fmt.Sprintf("-b:a:%d", outtrack), aacBitrate,
-				fmt.Sprintf("-disposition:a:%d", outtrack), "default",
-				fmt.Sprintf("-metadata:s:a:%d", outtrack), fmt.Sprintf("title=AAC Audio(%s)", lang))
+				fmt.Sprintf("-c:a:%d", audiotrack), "aac",
+				fmt.Sprintf("-b:a:%d", audiotrack), aacBitrate,
+				fmt.Sprintf("-metadata:s:a:%d", audiotrack), fmt.Sprintf("title=AAC Audio (%s)", lang))
 		} else {
-			args = append(args, fmt.Sprintf("-c:a:%d", outtrack), "copy")
+			args = append(args, fmt.Sprintf("-c:a:%d", audiotrack), "copy")
 		}
-		outtrack++
+		args = append(args, fmt.Sprintf("-disposition:a:%d", audiotrack), disposition)
+		audiotrack++
 	}
 
+	for _, track := range tracks {
+		if track.Type != mkvSubType {
+			continue
+		}
+
+		_, disposition := langAndDisposition(track)
+
+		// Map track for output, copy and set disposition.
+		args = append(args,
+			"-map", fmt.Sprintf("0:%d", track.ID),
+			fmt.Sprintf("-c:s:%d", subtrack), "copy",
+			fmt.Sprintf("-disposition:s:%d", subtrack), disposition)
+		subtrack++
+	}
+
+	// Final arguments.
 	args = append(args,
-		"-map", "0:s", // Copy all subtitle tracks last.
 		"-max_interleave_delta", "0",
 		"-y",
 		"-f", "matroska",
@@ -169,9 +206,13 @@ func TranscodeEAC3(mkvfile string) error {
 		return fmt.Errorf("output file '%s' already exists. Skipping", outputFile)
 	}
 
-	tracks, err := readAudioTracks(mkvfile)
+	tracks, err := readTracks(mkvfile)
 	if err != nil {
 		return err
+	}
+	log.Println("=== List of input tracks ===")
+	for _, track := range tracks {
+		log.Printf("  - ID: %d (%s), Codec: %s, Language: %s", track.ID, track.Type, track.CodecID, track.Properties.Language)
 	}
 
 	// If no EAC3 tracks found, nothing to do.
@@ -185,7 +226,7 @@ func TranscodeEAC3(mkvfile string) error {
 	}
 
 	tcmd := TranscoderCmd(mkvfile, outputFile, tracks)
-	log.Printf("Executing command:\n%s\n", "'"+strings.Join(tcmd, "', '")+"'")
+	log.Printf("Executing command:\n%s\n", "'"+strings.Join(tcmd, "' '")+"'")
 
 	// Execute the ffmpeg command, send all output to stderr.
 	cmd := exec.Command(tcmd[0], tcmd[1:]...)
