@@ -1,6 +1,8 @@
 // Fix common problems in MKV files:
 //
 // - Convert EAC3 audio to AAC to avoid issues with players.
+// - If the file has equivalent EAC3/AAC tracks, remove the EAC3 version.
+// - Set all "eng" tracks to be the default tracks.
 // - All other tracks and metadata is copied from the original file.
 //
 // (C) Jul/2025 by Marco Paganini <paganini@paganini.net>
@@ -83,12 +85,21 @@ func readTracks(inputFile string) ([]trackInfo, error) {
 	return tracks, nil
 }
 
-func filterAudioTracks(tracks []trackInfo, codec string) []trackInfo {
+// filterTracks returns a list of tracks filtered by type, codec and language. If any of the
+// parameters is blank, ignore it during comparison.
+func filterTracks(tracks []trackInfo, ttype string, codec string, lang string) []trackInfo {
 	var ret []trackInfo
 	for _, track := range tracks {
-		if track.Type == mkvAudioType && track.CodecID == codec {
-			ret = append(ret, track)
+		if ttype != "" && track.Type != ttype {
+			continue
 		}
+		if codec != "" && track.CodecID != codec {
+			continue
+		}
+		if lang != "" && track.Properties.Language != lang {
+			continue
+		}
+		ret = append(ret, track)
 	}
 	return ret
 }
@@ -104,6 +115,24 @@ func langAndDisposition(track trackInfo) (string, string) {
 		disposition = "default"
 	}
 	return lang, disposition
+}
+
+// printHeader prints a header using the passed string. The string is broken down by
+// newlines and a separator is printed before the first line and after the first line
+// to match the longest line in the string.
+func printHeader(header string) {
+	lines := strings.Split(header, "\n")
+
+	var maxlen int
+	for _, line := range lines {
+		maxlen = max(maxlen, len(line))
+	}
+
+	fmt.Println(strings.Repeat("=", maxlen))
+	for _, line := range lines {
+		fmt.Println(line)
+	}
+	fmt.Println(strings.Repeat("=", maxlen))
 }
 
 // transcoderCmd creates an ffmpeg command to transcode EAC3 tracks to AAC
@@ -133,33 +162,58 @@ func TranscoderCmd(inputFile string, outputFile string, tracks []trackInfo) []st
 
 	// Run first for audio tracks, then subtitle tracks so we maintain the
 	// A/V/S order in the output file.
+
+	printHeader("Processing AUDIO tracks")
+
 	for _, track := range tracks {
+		trackAction := ""
+
 		if track.Type != mkvAudioType {
 			continue
 		}
+		trackData := fmt.Sprintf("%d: codec=%s lang=%s", track.ID, track.CodecID, track.Properties.Language)
 
 		lang, disposition := langAndDisposition(track)
 
-		// Map track for output.
-		args = append(args, "-map", fmt.Sprintf("0:%d", track.ID))
-
 		// Transcode or copy.
 		if track.CodecID == eac3Codec {
+			// If we have an equivalent AAC track with the same language and
+			// language is not "und", ignore that the EAC3 track.
+			if lang != "und" {
+				equivalent := filterTracks(tracks, mkvAudioType, aacCodec, lang)
+				if len(equivalent) > 0 {
+					trackAction = fmt.Sprintf("found %d AAC equivalent audio track(s). Skipping.", len(equivalent))
+					log.Println("  " + trackData + ": " + trackAction)
+					continue
+				}
+			}
+			trackAction = "selected for EAC3 --> AAC conversion"
 			args = append(args,
 				fmt.Sprintf("-c:a:%d", audiotrack), "aac",
 				fmt.Sprintf("-b:a:%d", audiotrack), aacBitrate,
 				fmt.Sprintf("-metadata:s:a:%d", audiotrack), fmt.Sprintf("title=AAC Audio (%s)", lang))
 		} else {
+			trackAction = "selected for COPY."
 			args = append(args, fmt.Sprintf("-c:a:%d", audiotrack), "copy")
 		}
-		args = append(args, fmt.Sprintf("-disposition:a:%d", audiotrack), disposition)
+		args = append(args,
+			"-map", fmt.Sprintf("0:%d", track.ID),
+			fmt.Sprintf("-disposition:a:%d", audiotrack), disposition)
+
+		log.Println("  " + trackData + ": " + trackAction)
 		audiotrack++
 	}
 
+	printHeader("Processing SUBTITLES tracks")
+
 	for _, track := range tracks {
+		trackAction := ""
+
 		if track.Type != mkvSubType {
 			continue
 		}
+
+		trackData := fmt.Sprintf("%d: codec=%s lang=%s", track.ID, track.CodecID, track.Properties.Language)
 
 		_, disposition := langAndDisposition(track)
 
@@ -168,6 +222,9 @@ func TranscoderCmd(inputFile string, outputFile string, tracks []trackInfo) []st
 			"-map", fmt.Sprintf("0:%d", track.ID),
 			fmt.Sprintf("-c:s:%d", subtrack), "copy",
 			fmt.Sprintf("-disposition:s:%d", subtrack), disposition)
+
+		trackAction = "selected for COPY."
+		log.Println("  " + trackData + ": " + trackAction)
 		subtrack++
 	}
 
@@ -210,23 +267,16 @@ func TranscodeEAC3(mkvfile string) error {
 	if err != nil {
 		return err
 	}
-	log.Println("=== List of input tracks ===")
+
+	printHeader(fmt.Sprintf("File: %s\nList of input tracks", mkvfile))
+
 	for _, track := range tracks {
 		log.Printf("  - ID: %d (%s), Codec: %s, Language: %s", track.ID, track.Type, track.CodecID, track.Properties.Language)
 	}
 
-	// If no EAC3 tracks found, nothing to do.
-	if len(filterAudioTracks(tracks, eac3Codec)) == 0 {
-		return fmt.Errorf("no EAC3 audio tracks found in %s. No conversion needed", mkvfile)
-	}
-
-	// If AAC tracks found, we assume we already transcoded this file.
-	if len(filterAudioTracks(tracks, aacCodec)) > 0 {
-		return fmt.Errorf("found AAC audio tracks in %s. No conversion needed", mkvfile)
-	}
-
 	tcmd := TranscoderCmd(mkvfile, outputFile, tracks)
-	log.Printf("Executing command:\n%s\n", "'"+strings.Join(tcmd, "' '")+"'")
+	printHeader("Executing command")
+	log.Println("'" + strings.Join(tcmd, "' '") + "'")
 
 	// Execute the ffmpeg command, send all output to stderr.
 	cmd := exec.Command(tcmd[0], tcmd[1:]...)
