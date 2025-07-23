@@ -11,6 +11,7 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -24,10 +25,11 @@ const (
 	eac3Codec    = "E-AC-3"
 	aacCodec     = "AAC"
 	aacBitrate   = "256k"
-	defaultLang  = "eng"
 	mkvAudioType = "audio"
 	mkvSubType   = "subtitles"
 )
+
+var defaultLang = flag.String("lang", "eng", "Default language for audio and subtitle tracks")
 
 // trackInfo holds information about a track from mkvmerge.
 type trackInfo struct {
@@ -111,7 +113,7 @@ func langAndDisposition(track trackInfo) (string, string) {
 	if track.Properties.Language != "" {
 		lang = track.Properties.Language
 	}
-	if lang == defaultLang {
+	if lang == *defaultLang {
 		disposition = "default"
 	}
 	return lang, disposition
@@ -298,21 +300,33 @@ func TranscodeEAC3(mkvfile string) error {
 	return nil
 }
 
+// usage prints a customized usage message.
+func usage() {
+	progname := filepath.Base(os.Args[0])
+	fmt.Fprintf(os.Stderr, "Usage: %s [options] <input_file.mkv>...\n\n", progname)
+	fmt.Fprintln(os.Stderr, "Options:")
+	flag.PrintDefaults()
+}
+
 func main() {
 	// No date & time on logs.
 	log.SetFlags(0)
-	progname := filepath.Base(os.Args[0])
+	flag.Usage = usage
+	flag.Parse()
 
-	if len(os.Args) < 2 {
-		log.Fatalf("use: %s input_file.mkv...", progname)
+	if len(flag.Args()) < 1 {
+		flag.Usage()
+		os.Exit(1)
 	}
 
 	if err := checkRequirements(); err != nil {
+		progname := filepath.Base(os.Args[0])
 		log.Fatalf("%s:missing requirements: %v", progname, err)
 	}
 
-	for _, f := range os.Args[1:] {
+	for _, f := range flag.Args() {
 		if err := TranscodeEAC3(f); err != nil {
+			progname := filepath.Base(os.Args[0])
 			log.Printf("%s: ERROR(%s): %v\n", progname, f, err)
 			continue
 		}
