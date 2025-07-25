@@ -29,7 +29,10 @@ const (
 	mkvSubType   = "subtitles"
 )
 
-var defaultLang = flag.String("lang", "eng", "Default language for audio and subtitle tracks")
+var (
+	optLang  = flag.String("lang", "eng", "Default language for audio and subtitle tracks")
+	optPrune = flag.Bool("prune", false, "Prune tracks not in the default language or 'und'")
+)
 
 // trackInfo holds information about a track from mkvmerge.
 type trackInfo struct {
@@ -58,9 +61,9 @@ func checkRequirements() error {
 	return nil
 }
 
-// readTracks returns a map of all tracks in the input file using
+// readTracksFunc returns a map of all tracks in the input file using
 // mkvmerge --identify.
-func readTracks(inputFile string) ([]trackInfo, error) {
+func readTracksFunc(inputFile string) ([]trackInfo, error) {
 	// Get track information using mkvmerge.
 	cmd := exec.Command("mkvmerge", "--identify", "-F", "json", inputFile)
 	output, err := cmd.Output()
@@ -106,6 +109,35 @@ func filterTracks(tracks []trackInfo, ttype string, codec string, lang string) [
 	return ret
 }
 
+// pruneOK returns checks if pruning would remove all tracks of a given type
+// and language from the output (E.g, resulting in a file with no audio
+// tracks).  Returns nil or an error.
+func pruneOK(tracks []trackInfo, lang string) error {
+	// Filter all output tracks using the default language.
+	var filteredTracks []trackInfo
+	for _, t := range tracks {
+		if t.Properties.Language == lang || t.Properties.Language == "und" {
+			filteredTracks = append(filteredTracks, t)
+		}
+	}
+	// Make sure we will still have at least one of each input track type and
+	// language in the output.
+	inputTrackTypes := make(map[string]bool)
+	for _, t := range tracks {
+		inputTrackTypes[t.Type] = true
+	}
+	outputTrackTypes := make(map[string]bool)
+	for _, t := range filteredTracks {
+		outputTrackTypes[t.Type] = true
+	}
+	for trackType := range inputTrackTypes {
+		if !outputTrackTypes[trackType] {
+			return fmt.Errorf("pruning would remove all %s tracks from the output", trackType)
+		}
+	}
+	return nil
+}
+
 func langAndDisposition(track trackInfo) (string, string) {
 	lang := "und"
 	disposition := "-default"
@@ -113,7 +145,7 @@ func langAndDisposition(track trackInfo) (string, string) {
 	if track.Properties.Language != "" {
 		lang = track.Properties.Language
 	}
-	if lang == *defaultLang {
+	if lang == *optLang {
 		disposition = "default"
 	}
 	return lang, disposition
@@ -139,7 +171,7 @@ func printHeader(header string) {
 
 // transcoderCmd creates an ffmpeg command to transcode EAC3 tracks to AAC
 // and copy the remaining data.
-func TranscoderCmd(inputFile string, outputFile string, tracks []trackInfo) []string {
+func transcoderCmd(inputFile string, outputFile string, tracks []trackInfo, doPrune bool, optlang string) []string {
 	// Create the ffmpeg command line.
 	args := []string{
 		"ffmpeg",
@@ -173,9 +205,16 @@ func TranscoderCmd(inputFile string, outputFile string, tracks []trackInfo) []st
 		if track.Type != mkvAudioType {
 			continue
 		}
-		trackData := fmt.Sprintf("%d: codec=%s lang=%s", track.ID, track.CodecID, track.Properties.Language)
 
 		lang, disposition := langAndDisposition(track)
+
+		// If pruning is enabled, skip tracks that are not in the default language or "und".
+		if doPrune && lang != optlang && lang != "und" {
+			log.Printf("  %d: codec=%s lang=%s: Skipping due to --prune flag.", track.ID, track.CodecID, track.Properties.Language)
+			continue
+		}
+
+		trackData := fmt.Sprintf("%d: codec=%s lang=%s", track.ID, track.CodecID, lang)
 
 		// Transcode or copy.
 		if track.CodecID == eac3Codec {
@@ -215,9 +254,15 @@ func TranscoderCmd(inputFile string, outputFile string, tracks []trackInfo) []st
 			continue
 		}
 
-		trackData := fmt.Sprintf("%d: codec=%s lang=%s", track.ID, track.CodecID, track.Properties.Language)
+		lang, disposition := langAndDisposition(track)
 
-		_, disposition := langAndDisposition(track)
+		// If pruning is enabled, skip tracks that are not in the default language or "und".
+		if doPrune && optlang != lang && lang != "und" {
+			log.Printf("  %d: codec=%s lang=%s: Skipping due to --prune flag.", track.ID, track.CodecID, lang)
+			continue
+		}
+
+		trackData := fmt.Sprintf("%d: codec=%s lang=%s", track.ID, track.CodecID, track.Properties.Language)
 
 		// Map track for output, copy and set disposition.
 		args = append(args,
@@ -240,8 +285,8 @@ func TranscoderCmd(inputFile string, outputFile string, tracks []trackInfo) []st
 	return args
 }
 
-// TranscodeEAC3 converts EAC3 audio to AAC audio in the input file.
-func TranscodeEAC3(mkvfile string) error {
+// transcodeEAC3 converts EAC3 audio to AAC audio in the input file.
+func transcodeEAC3(mkvfile string, readTracksFunc func(string) ([]trackInfo, error)) error {
 	// Check if the input file exists
 	if _, err := os.Stat(mkvfile); os.IsNotExist(err) {
 		return fmt.Errorf("file not found: %s", mkvfile)
@@ -265,7 +310,7 @@ func TranscodeEAC3(mkvfile string) error {
 		return fmt.Errorf("output file '%s' already exists. Skipping", outputFile)
 	}
 
-	tracks, err := readTracks(mkvfile)
+	tracks, err := readTracksFunc(mkvfile)
 	if err != nil {
 		return err
 	}
@@ -276,7 +321,16 @@ func TranscodeEAC3(mkvfile string) error {
 		log.Printf("  - ID: %d (%s), Codec: %s, Language: %s", track.ID, track.Type, track.CodecID, track.Properties.Language)
 	}
 
-	tcmd := TranscoderCmd(mkvfile, outputFile, tracks)
+	// If pruning is enabled, filter tracks and check if any track type is completely removed.
+	tracksToProcess := tracks
+	if *optPrune {
+		err = pruneOK(tracks, *optLang)
+		if err != nil {
+			return err
+		}
+	}
+
+	tcmd := transcoderCmd(mkvfile, outputFile, tracksToProcess, *optPrune, *optLang)
 	printHeader("Executing command")
 	log.Println("'" + strings.Join(tcmd, "' '") + "'")
 
@@ -309,8 +363,11 @@ func usage() {
 }
 
 func main() {
+	progname := filepath.Base(os.Args[0])
+
 	// No date & time on logs.
 	log.SetFlags(0)
+
 	flag.Usage = usage
 	flag.Parse()
 
@@ -319,14 +376,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	if *optPrune && *optLang == "" {
+		log.Fatalf("When --prune is specified, --lang becomes mandatory.")
+	}
+	if *optLang == "" {
+		log.Printf("No language specified. All tracks will be copied.")
+	}
+
 	if err := checkRequirements(); err != nil {
-		progname := filepath.Base(os.Args[0])
-		log.Fatalf("%s:missing requirements: %v", progname, err)
+		log.Fatalf("Error: %v", err)
 	}
 
 	for _, f := range flag.Args() {
-		if err := TranscodeEAC3(f); err != nil {
-			progname := filepath.Base(os.Args[0])
+		if err := transcodeEAC3(f, readTracksFunc); err != nil {
 			log.Printf("%s: ERROR(%s): %v\n", progname, f, err)
 			continue
 		}
