@@ -286,20 +286,20 @@ func transcoderCmd(inputFile string, outputFile string, tracks []trackInfo, doPr
 }
 
 // transcodeEAC3 converts EAC3 audio to AAC audio in the input file.
-func transcodeEAC3(mkvfile string, readTracksFunc func(string) ([]trackInfo, error)) error {
+func transcodeEAC3(infile string, readTracksFunc func(string) ([]trackInfo, error)) error {
 	// Check if the input file exists
-	if _, err := os.Stat(mkvfile); os.IsNotExist(err) {
-		return fmt.Errorf("file not found: %s", mkvfile)
+	if _, err := os.Stat(infile); os.IsNotExist(err) {
+		return fmt.Errorf("file not found: %s", infile)
 	}
 
 	// Generate the output filename
-	filename := filepath.Base(mkvfile)
-	dirname := filepath.Dir(mkvfile)
+	dirname := filepath.Dir(infile)
+	filename := filepath.Base(infile)
 	extension := strings.ToLower(filepath.Ext(filename))
 	filenameNoExt := strings.TrimSuffix(filename, filepath.Ext(filename))
 
-	if extension != ".mkv" {
-		return fmt.Errorf("not an MKV file: %s", mkvfile)
+	if extension != ".mkv" && extension != ".mp4" {
+		return fmt.Errorf("not an MKV or MP4 file: %s", infile)
 	}
 
 	outputFile := filepath.Join(dirname, fmt.Sprintf("%s%s%s.TMP", filenameNoExt, outputSuffix, extension))
@@ -310,12 +310,12 @@ func transcodeEAC3(mkvfile string, readTracksFunc func(string) ([]trackInfo, err
 		return fmt.Errorf("output file '%s' already exists. Skipping", outputFile)
 	}
 
-	tracks, err := readTracksFunc(mkvfile)
+	tracks, err := readTracksFunc(infile)
 	if err != nil {
 		return err
 	}
 
-	printHeader(fmt.Sprintf("File: %s\nList of input tracks", mkvfile))
+	printHeader(fmt.Sprintf("File: %s\nList of input tracks", infile))
 
 	for _, track := range tracks {
 		log.Printf("  - ID: %d (%s), Codec: %s, Language: %s", track.ID, track.Type, track.CodecID, track.Properties.Language)
@@ -330,7 +330,7 @@ func transcodeEAC3(mkvfile string, readTracksFunc func(string) ([]trackInfo, err
 		}
 	}
 
-	tcmd := transcoderCmd(mkvfile, outputFile, tracksToProcess, *optPrune, *optLang)
+	tcmd := transcoderCmd(infile, outputFile, tracksToProcess, *optPrune, *optLang)
 	printHeader("Executing command")
 	log.Println("'" + strings.Join(tcmd, "' '") + "'")
 
@@ -341,15 +341,22 @@ func transcodeEAC3(mkvfile string, readTracksFunc func(string) ([]trackInfo, err
 
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(outputFile)
-		return fmt.Errorf("ffmpeg conversion failed for %s: %v", mkvfile, err)
+		return fmt.Errorf("ffmpeg conversion failed for %s: %v", infile, err)
 	}
 
 	// Move the output file to the input file
-	if _, err := os.Stat(mkvfile); os.IsNotExist(err) {
-		return fmt.Errorf("original file (%s) no longer exists after transcoding", mkvfile)
+	if _, err := os.Stat(infile); os.IsNotExist(err) {
+		return fmt.Errorf("original file (%s) no longer exists after transcoding", infile)
 	}
-	if err := os.Rename(outputFile, mkvfile); err != nil {
-		return fmt.Errorf("failed to move '%s' to '%s': %v", outputFile, mkvfile, err)
+	if err := os.Rename(outputFile, infile); err != nil {
+		return fmt.Errorf("failed to move '%s' to '%s': %v", outputFile, infile, err)
+	}
+	// If the input file is a .mp4 file. In this case, since we crated a mkv
+	// file during transcoding, rename it to .mkv
+	if extension == ".mp4" {
+		if err := os.Rename(infile, strings.TrimSuffix(infile, ".mp4")+".mkv"); err != nil {
+			return fmt.Errorf("failed to move '%s' to '%s': %v", outputFile, infile, err)
+		}
 	}
 	return nil
 }
