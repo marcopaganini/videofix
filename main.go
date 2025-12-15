@@ -30,8 +30,11 @@ const (
 )
 
 var (
-	optLang  = flag.String("lang", "eng", "Default language for audio and subtitle tracks")
-	optPrune = flag.Bool("prune", false, "Prune tracks not in the default language or 'und'")
+	optLang   = flag.String("lang", "eng", "Default language for audio and subtitle tracks")
+	optPrune  = flag.Bool("prune", false, "Prune tracks not in the default language or 'und'")
+	optDir    = flag.String("dir", "", "Directory mode. Use largest MKV/MP4 file in directory as the input")
+	optFile   = flag.String("input", "", "Input filename")
+	outputDir = flag.String("output", "", "Output directory.")
 )
 
 // trackInfo holds information about a track from mkvmerge.
@@ -302,6 +305,13 @@ func transcodeEAC3(infile string, readTracksFunc func(string) ([]trackInfo, erro
 		return fmt.Errorf("not an MKV or MP4 file: %s", infile)
 	}
 
+	// Use outputDir if specified
+	if *outputDir != "" {
+		dirname = *outputDir
+		if err := os.MkdirAll(dirname, 0775); err != nil {
+			return fmt.Errorf("unable to create output directory: %s", dirname)
+		}
+	}
 	outputFile := filepath.Join(dirname, fmt.Sprintf("%s%s%s.TMP", filenameNoExt, outputSuffix, extension))
 
 	// Do not proceed if our temp file already exists.  This may mean another
@@ -344,12 +354,10 @@ func transcodeEAC3(infile string, readTracksFunc func(string) ([]trackInfo, erro
 		return fmt.Errorf("ffmpeg conversion failed for %s: %v", infile, err)
 	}
 
-	// Move the output file to the input file
-	if _, err := os.Stat(infile); os.IsNotExist(err) {
-		return fmt.Errorf("original file (%s) no longer exists after transcoding", infile)
-	}
-	if err := os.Rename(outputFile, infile); err != nil {
-		return fmt.Errorf("failed to move '%s' to '%s': %v", outputFile, infile, err)
+	// Rename the output file back to the original name in the output directory
+	newOutputFile := filepath.Join(dirname, fmt.Sprintf("%s%s", filenameNoExt, extension))
+	if err := os.Rename(outputFile, newOutputFile); err != nil {
+		return fmt.Errorf("failed to move '%s' to '%s': %v", outputFile, newOutputFile, err)
 	}
 	// If the input file is a .mp4 file. In this case, since we crated a mkv
 	// file during transcoding, rename it to .mkv
@@ -361,10 +369,38 @@ func transcodeEAC3(infile string, readTracksFunc func(string) ([]trackInfo, erro
 	return nil
 }
 
+// findVideoFile scans the passed directory and returns the largest file with a
+// .mkv or .mp4 extension.  Files with .mkv extension are preferred. If no
+// files with these extensions exist, an error is returned.
+func findVideoFile(dir string) (string, error) {
+	var largestFile string
+	var largestSize int64
+
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(info.Name(), ".mkv") || strings.HasSuffix(info.Name(), ".mp4") {
+			if info.Size() > largestSize {
+				largestFile = path
+				largestSize = info.Size()
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return largestFile, nil
+}
+
 // usage prints a customized usage message.
 func usage() {
 	progname := filepath.Base(os.Args[0])
-	fmt.Fprintf(os.Stderr, "Usage: %s [options] <input_file.mkv>...\n\n", progname)
+	fmt.Fprintf(os.Stderr, "Usage: %s [options] [<input_file.mkv> | --dir <directory>]\n\n", progname)
 	fmt.Fprintln(os.Stderr, "Options:")
 	flag.PrintDefaults()
 }
@@ -378,7 +414,7 @@ func main() {
 	flag.Usage = usage
 	flag.Parse()
 
-	if len(flag.Args()) < 1 {
+	if (*optDir == "" && *optFile == "") || (*optDir != "" && *optFile != "") {
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -394,12 +430,20 @@ func main() {
 		log.Fatalf("Error: %v", err)
 	}
 
-	for _, f := range flag.Args() {
-		if err := transcodeEAC3(f, readTracksFunc); err != nil {
-			log.Printf("%s: ERROR(%s): %v\n", progname, f, err)
-			continue
+	var err error
+
+	movieFile := *optFile
+	if *optDir != "" {
+		movieFile, err = findVideoFile(*optDir)
+		if err != nil {
+			log.Fatalf("%s: ERROR: trying to find movie in directory %s: %v\n", progname, *optDir, err)
 		}
-		log.Printf("%s: Operation successful.\n", f)
+		log.Printf("Using file: %s\n", movieFile)
 	}
+
+	if err := transcodeEAC3(movieFile, readTracksFunc); err != nil {
+		log.Fatalf("%s: ERROR: %s:%v\n", progname, movieFile, err)
+	}
+	log.Printf("%s: Operation successful.\n", movieFile)
 	os.Exit(0)
 }
