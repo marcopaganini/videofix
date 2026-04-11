@@ -369,12 +369,10 @@ func transcodeEAC3(infile string, readTracksFunc func(string) ([]trackInfo, erro
 	return nil
 }
 
-// findVideoFile scans the passed directory and returns the largest file with a
-// .mkv or .mp4 extension.  Files with .mkv extension are preferred. If no
-// files with these extensions exist, an error is returned.
-func findVideoFile(dir string) (string, error) {
-	var largestFile string
-	var largestSize int64
+// findVideoFiles scans the passed directory and returns all files with a
+// .mkv extension.
+func findVideoFiles(dir string) ([]string, error) {
+	var files []string
 
 	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -383,18 +381,15 @@ func findVideoFile(dir string) (string, error) {
 		if info.IsDir() {
 			return nil
 		}
-		if strings.HasSuffix(info.Name(), ".mkv") || strings.HasSuffix(info.Name(), ".mp4") {
-			if info.Size() > largestSize {
-				largestFile = path
-				largestSize = info.Size()
-			}
+		if strings.HasSuffix(info.Name(), ".mkv") {
+			files = append(files, path)
 		}
 		return nil
 	})
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return largestFile, nil
+	return files, nil
 }
 
 // usage prints a customized usage message.
@@ -430,20 +425,35 @@ func main() {
 		log.Fatalf("Error: %v", err)
 	}
 
-	var err error
-
-	movieFile := *optFile
+	var movieFiles []string
+	if *optFile != "" {
+		movieFiles = append(movieFiles, *optFile)
+	}
 	if *optDir != "" {
-		movieFile, err = findVideoFile(*optDir)
+		var err error
+		movieFiles, err = findVideoFiles(*optDir)
 		if err != nil {
-			log.Fatalf("%s: ERROR: trying to find movie in directory %s: %v\n", progname, *optDir, err)
+			log.Fatalf("%s: ERROR: trying to find movies in directory %s: %v\n", progname, *optDir, err)
 		}
-		log.Printf("Using file: %s\n", movieFile)
+		if len(movieFiles) == 0 {
+			log.Printf("No .mkv files found in directory: %s\n", *optDir)
+			os.Exit(0)
+		}
 	}
 
-	if err := transcodeEAC3(movieFile, readTracksFunc); err != nil {
-		log.Fatalf("%s: ERROR: %s:%v\n", progname, movieFile, err)
+	var hasErrors bool
+	for _, movieFile := range movieFiles {
+		log.Printf("Processing: %s\n", movieFile)
+		if err := transcodeEAC3(movieFile, readTracksFunc); err != nil {
+			log.Printf("%s: ERROR: %s: %v\n", progname, movieFile, err)
+			hasErrors = true
+			continue
+		}
+		log.Printf("%s: Operation successful.\n", movieFile)
 	}
-	log.Printf("%s: Operation successful.\n", movieFile)
+
+	if hasErrors {
+		os.Exit(1)
+	}
 	os.Exit(0)
 }

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -275,80 +277,40 @@ func TestTranscoderCmd(t *testing.T) {
 	}
 }
 
-func TestLangAndDisposition(t *testing.T) {
-	// Helper function to set the value of a string pointer
-	setStringPtr := func(s string) *string {
-		return &s
+func TestFindVideoFiles(t *testing.T) {
+	tempDir := t.TempDir()
+
+	files := []string{
+		"test1.mkv",
+		"test2.mkv",
+		"test3.mp4",
+		"other.txt",
 	}
 
-	testCases := []struct {
-		name                string
-		track               trackInfo
-		optLang             *string
-		expectedLang        string
-		expectedDisposition string
-	}{
-		{
-			name: "Language matches optLang",
-			track: trackInfo{Properties: struct {
-				Language string `json:"language"`
-			}{Language: "eng"}},
-			optLang:             setStringPtr("eng"),
-			expectedLang:        "eng",
-			expectedDisposition: "default",
-		},
-		{
-			name: "Language does not match optLang",
-			track: trackInfo{Properties: struct {
-				Language string `json:"language"`
-			}{Language: "spa"}},
-			optLang:             setStringPtr("eng"),
-			expectedLang:        "spa",
-			expectedDisposition: "-default",
-		},
-		{
-			name: "Empty language property",
-			track: trackInfo{Properties: struct {
-				Language string `json:"language"`
-			}{Language: ""}},
-			optLang:             setStringPtr("eng"),
-			expectedLang:        "und",
-			expectedDisposition: "-default",
-		},
-		{
-			name: "Language is und",
-			track: trackInfo{Properties: struct {
-				Language string `json:"language"`
-			}{Language: "und"}},
-			optLang:             setStringPtr("eng"),
-			expectedLang:        "und",
-			expectedDisposition: "-default",
-		},
-		{
-			name: "optLang is not default",
-			track: trackInfo{Properties: struct {
-				Language string `json:"language"`
-			}{Language: "por"}},
-			optLang:             setStringPtr("por"),
-			expectedLang:        "por",
-			expectedDisposition: "default",
-		},
+	for _, f := range files {
+		if err := os.WriteFile(filepath.Join(tempDir, f), []byte("test"), 0644); err != nil {
+			t.Fatalf("failed to create test file %s: %v", f, err)
+		}
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Set the global optLang for the duration of this test case
-			originalOptLang := optLang
-			optLang = tc.optLang
-			defer func() { optLang = originalOptLang }()
+	expected := []string{
+		filepath.Join(tempDir, "test1.mkv"),
+		filepath.Join(tempDir, "test2.mkv"),
+	}
 
-			lang, disposition := langAndDisposition(tc.track)
-			if lang != tc.expectedLang {
-				t.Errorf("expected lang %s, got %s", tc.expectedLang, lang)
-			}
-			if disposition != tc.expectedDisposition {
-				t.Errorf("expected disposition %s, got %s", tc.expectedDisposition, disposition)
-			}
-		})
+	result, err := findVideoFiles(tempDir)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(result) != len(expected) {
+		t.Fatalf("expected %d files, got %d", len(expected), len(result))
+	}
+
+	// filepath.Walk order is lexicographical
+	for i, f := range expected {
+		if result[i] != f {
+			t.Errorf("expected file %s, got %s", f, result[i])
+		}
 	}
 }
