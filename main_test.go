@@ -11,20 +11,25 @@ import (
 func TestFilterTracks(t *testing.T) {
 	tracks := []trackInfo{
 		{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "eng"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "eng", AudioChannels: 2}},
 		{ID: 2, Type: "audio", CodecID: "E-AC-3", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "eng"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "eng", AudioChannels: 2}},
 		{ID: 3, Type: "video", CodecID: "V_MPEG4/ISO/AVC", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "und"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "und", AudioChannels: 0}},
 		{ID: 4, Type: "subtitles", CodecID: "S_HDMV/PGS", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "eng"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "eng", AudioChannels: 2}},
 		{ID: 5, Type: "audio", CodecID: "AAC", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "spa"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "spa", AudioChannels: 2}},
 	}
 
 	testCases := []struct {
@@ -39,14 +44,17 @@ func TestFilterTracks(t *testing.T) {
 			ttype: "audio",
 			expected: []trackInfo{
 				{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 				{ID: 2, Type: "audio", CodecID: "E-AC-3", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 				{ID: 5, Type: "audio", CodecID: "AAC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "spa"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "spa", AudioChannels: 2}},
 			},
 		},
 		{
@@ -54,11 +62,13 @@ func TestFilterTracks(t *testing.T) {
 			codec: "AAC",
 			expected: []trackInfo{
 				{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 				{ID: 5, Type: "audio", CodecID: "AAC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "spa"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "spa", AudioChannels: 2}},
 			},
 		},
 		{
@@ -66,14 +76,17 @@ func TestFilterTracks(t *testing.T) {
 			lang: "eng",
 			expected: []trackInfo{
 				{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 				{ID: 2, Type: "audio", CodecID: "E-AC-3", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 				{ID: 4, Type: "subtitles", CodecID: "S_HDMV/PGS", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 			},
 		},
 		{
@@ -82,11 +95,13 @@ func TestFilterTracks(t *testing.T) {
 			lang:  "eng",
 			expected: []trackInfo{
 				{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 				{ID: 2, Type: "audio", CodecID: "E-AC-3", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 			},
 		},
 		{
@@ -96,8 +111,9 @@ func TestFilterTracks(t *testing.T) {
 			lang:  "eng",
 			expected: []trackInfo{
 				{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "eng"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
 			},
 		},
 		{
@@ -128,20 +144,25 @@ func TestFilterTracks(t *testing.T) {
 func TestPruneOK(t *testing.T) {
 	tracks := []trackInfo{
 		{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "eng"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "eng", AudioChannels: 2}},
 		{ID: 2, Type: "audio", CodecID: "E-AC-3", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "por"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "por", AudioChannels: 2}},
 		{ID: 3, Type: "video", CodecID: "V_MPEG4/ISO/AVC", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "und"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "und", AudioChannels: 0}},
 		{ID: 4, Type: "subtitles", CodecID: "S_HDMV/PGS", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "eng"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "eng", AudioChannels: 2}},
 		{ID: 5, Type: "subtitles", CodecID: "S_HDMV/PGS", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "por"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "por", AudioChannels: 2}},
 	}
 
 	testCases := []struct {
@@ -161,11 +182,13 @@ func TestPruneOK(t *testing.T) {
 			name: "Pruning would remove all audio tracks",
 			tracks: []trackInfo{
 				{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "spa"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "spa", AudioChannels: 2}},
 				{ID: 2, Type: "video", CodecID: "V_MPEG4/ISO/AVC", Properties: struct {
-					Language string `json:"language"`
-				}{Language: "und"}},
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "und", AudioChannels: 0}},
 			},
 			defaultLang:   "eng",
 			expectErr:     true,
@@ -209,38 +232,45 @@ func TestPruneOK(t *testing.T) {
 func TestTranscoderCmd(t *testing.T) {
 	tracks := []trackInfo{
 		{ID: 1, Type: "audio", CodecID: "E-AC-3", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "eng"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "eng", AudioChannels: 2}},
 		{ID: 2, Type: "audio", CodecID: "AAC", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "eng"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "eng", AudioChannels: 2}},
 		{ID: 3, Type: "video", CodecID: "V_MPEG4/ISO/AVC", Properties: struct {
-			Language string `json:"language"`
-		}{Language: ""}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "", AudioChannels: 0}},
 		{ID: 4, Type: "subtitles", CodecID: "S_HDMV/PGS", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "eng"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "eng", AudioChannels: 2}},
 		{ID: 5, Type: "audio", CodecID: "E-AC-3", Properties: struct {
-			Language string `json:"language"`
-		}{Language: "spa"}},
+			Language      string `json:"language"`
+			AudioChannels int    `json:"audio_channels"`
+		}{Language: "spa", AudioChannels: 2}},
 	}
 
 	testCases := []struct {
-		name       string
-		tracks     []trackInfo
-		doPrune    bool
-		optlang    string
-		inputFile  string
-		outputFile string
-		expected   []string
+		name        string
+		tracks      []trackInfo
+		doPrune     bool
+		forceStereo bool
+		optlang     string
+		inputFile   string
+		outputFile  string
+		expected    []string
 	}{
 		{
-			name:       "EAC3 to AAC conversion",
-			tracks:     tracks,
-			doPrune:    false,
-			optlang:    "eng",
-			inputFile:  "input.mkv",
-			outputFile: "output.mkv",
+			name:        "EAC3 to AAC conversion",
+			tracks:      tracks,
+			doPrune:     false,
+			forceStereo: false,
+			optlang:     "eng",
+			inputFile:   "input.mkv",
+			outputFile:  "output.mkv",
 			expected: []string{
 				"ffmpeg", "-loglevel", "error", "-stats", "-i", "input.mkv",
 				"-c:v", "copy", "-map", "0:v", "-map_chapters", "0", "-map_metadata", "0",
@@ -251,12 +281,13 @@ func TestTranscoderCmd(t *testing.T) {
 			},
 		},
 		{
-			name:       "Pruning enabled",
-			tracks:     tracks,
-			doPrune:    true,
-			optlang:    "eng",
-			inputFile:  "input.mkv",
-			outputFile: "output.mkv",
+			name:        "Pruning enabled",
+			tracks:      tracks,
+			doPrune:     true,
+			forceStereo: false,
+			optlang:     "eng",
+			inputFile:   "input.mkv",
+			outputFile:  "output.mkv",
 			expected: []string{
 				"ffmpeg", "-loglevel", "error", "-stats", "-i", "input.mkv",
 				"-c:v", "copy", "-map", "0:v", "-map_chapters", "0", "-map_metadata", "0",
@@ -265,11 +296,41 @@ func TestTranscoderCmd(t *testing.T) {
 				"-max_interleave_delta", "0", "-y", "-f", "matroska", "output.mkv",
 			},
 		},
+		{
+			name: "Force stereo enabled",
+			tracks: []trackInfo{
+				{ID: 1, Type: "audio", CodecID: "AAC", Properties: struct {
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 6}},
+				{ID: 2, Type: "audio", CodecID: "AAC", Properties: struct {
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 2}},
+				{ID: 3, Type: "audio", CodecID: "AC-3", Properties: struct {
+					Language      string `json:"language"`
+					AudioChannels int    `json:"audio_channels"`
+				}{Language: "eng", AudioChannels: 6}},
+			},
+			doPrune:     false,
+			forceStereo: true,
+			optlang:     "eng",
+			inputFile:   "input.mkv",
+			outputFile:  "output.mkv",
+			expected: []string{
+				"ffmpeg", "-loglevel", "error", "-stats", "-i", "input.mkv",
+				"-c:v", "copy", "-map", "0:v", "-map_chapters", "0", "-map_metadata", "0",
+				"-c:a:0", "aac", "-b:a:0", "256k", "-ac:a:0", "2", "-metadata:s:a:0", "title=AAC Audio (eng)", "-map", "0:1", "-disposition:a:0", "default",
+				"-c:a:1", "copy", "-map", "0:2", "-disposition:a:1", "default",
+				"-c:a:2", "aac", "-b:a:2", "256k", "-ac:a:2", "2", "-metadata:s:a:2", "title=AAC Audio (eng)", "-map", "0:3", "-disposition:a:2", "default",
+				"-max_interleave_delta", "0", "-y", "-f", "matroska", "output.mkv",
+			},
+		},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			result := transcoderCmd(tc.inputFile, tc.outputFile, tc.tracks, tc.doPrune, tc.optlang)
+			result := transcoderCmd(tc.inputFile, tc.outputFile, tc.tracks, tc.doPrune, tc.forceStereo, tc.optlang)
 			if !reflect.DeepEqual(result, tc.expected) {
 				t.Errorf("expected:\n%v\ngot:\n%v", tc.expected, result)
 			}

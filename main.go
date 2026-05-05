@@ -30,11 +30,12 @@ const (
 )
 
 var (
-	optLang   = flag.String("lang", "eng", "Default language for audio and subtitle tracks")
-	optPrune  = flag.Bool("prune", false, "Prune tracks not in the default language or 'und'")
-	optDir    = flag.String("dir", "", "Directory mode. Use largest MKV/MP4 file in directory as the input")
-	optFile   = flag.String("input", "", "Input filename")
-	outputDir = flag.String("output", "", "Output directory.")
+	optLang        = flag.String("lang", "eng", "Default language for audio and subtitle tracks")
+	optPrune       = flag.Bool("prune", false, "Prune tracks not in the default language or 'und'")
+	optDir         = flag.String("dir", "", "Directory mode. Use largest MKV/MP4 file in directory as the input")
+	optFile        = flag.String("input", "", "Input filename")
+	optForceStereo = flag.Bool("force-stereo", false, "Force all non-stereo audio tracks to AAC stereo")
+	outputDir      = flag.String("output", "", "Output directory.")
 )
 
 // trackInfo holds information about a track from mkvmerge.
@@ -43,7 +44,8 @@ type trackInfo struct {
 	Type       string `json:"type"`
 	CodecID    string `json:"codec"`
 	Properties struct {
-		Language string `json:"language"`
+		Language      string `json:"language"`
+		AudioChannels int    `json:"audio_channels"`
 	} `json:"properties"`
 }
 
@@ -82,11 +84,12 @@ func readTracksFunc(inputFile string) ([]trackInfo, error) {
 	tracks := []trackInfo{}
 	for _, track := range info.Tracks {
 		t := trackInfo{
-			ID:         track.ID,
-			Type:       track.Type,
-			CodecID:    track.CodecID,
-			Properties: track.Properties,
+			ID:      track.ID,
+			Type:    track.Type,
+			CodecID: track.CodecID,
 		}
+		t.Properties.Language = track.Properties.Language
+		t.Properties.AudioChannels = track.Properties.AudioChannels
 		tracks = append(tracks, t)
 	}
 
@@ -174,7 +177,7 @@ func printHeader(header string) {
 
 // transcoderCmd creates an ffmpeg command to transcode EAC3 tracks to AAC
 // and copy the remaining data.
-func transcoderCmd(inputFile string, outputFile string, tracks []trackInfo, doPrune bool, optlang string) []string {
+func transcoderCmd(inputFile string, outputFile string, tracks []trackInfo, doPrune bool, forceStereo bool, optlang string) []string {
 	// Create the ffmpeg command line.
 	args := []string{
 		"ffmpeg",
@@ -217,13 +220,21 @@ func transcoderCmd(inputFile string, outputFile string, tracks []trackInfo, doPr
 			continue
 		}
 
-		trackData := fmt.Sprintf("%d: codec=%s lang=%s", track.ID, track.CodecID, lang)
+		trackData := fmt.Sprintf("%d: codec=%s lang=%s channels=%d", track.ID, track.CodecID, lang, track.Properties.AudioChannels)
+
+		isEAC3 := track.CodecID == eac3Codec
+		isStereo := track.Properties.AudioChannels == 2
+
+		shouldConvert := isEAC3 || (forceStereo && !isStereo)
+
+		// If track is AAC Stereo and --force-stereo is set, we must copy it.
+		// (shouldConvert will be false in this case since isStereo is true and it's not EAC3).
 
 		// Transcode or copy.
-		if track.CodecID == eac3Codec {
+		if shouldConvert {
 			// If we have an equivalent AAC track with the same language and
-			// language is not "und", ignore that the EAC3 track.
-			if lang != "und" {
+			// language is not "und", ignore the track if it's EAC3.
+			if isEAC3 && lang != "und" {
 				equivalent := filterTracks(tracks, mkvAudioType, aacCodec, lang)
 				if len(equivalent) > 0 {
 					trackAction = fmt.Sprintf("found %d AAC equivalent audio track(s). Skipping.", len(equivalent))
@@ -231,11 +242,17 @@ func transcoderCmd(inputFile string, outputFile string, tracks []trackInfo, doPr
 					continue
 				}
 			}
-			trackAction = "selected for EAC3 --> AAC conversion"
+			trackAction = fmt.Sprintf("selected for %s --> AAC conversion", track.CodecID)
 			args = append(args,
 				fmt.Sprintf("-c:a:%d", audiotrack), "aac",
-				fmt.Sprintf("-b:a:%d", audiotrack), aacBitrate,
-				fmt.Sprintf("-metadata:s:a:%d", audiotrack), fmt.Sprintf("title=AAC Audio (%s)", lang))
+				fmt.Sprintf("-b:a:%d", audiotrack), aacBitrate)
+
+			if forceStereo {
+				args = append(args, fmt.Sprintf("-ac:a:%d", audiotrack), "2")
+				trackAction += " (forced stereo)"
+			}
+
+			args = append(args, fmt.Sprintf("-metadata:s:a:%d", audiotrack), fmt.Sprintf("title=AAC Audio (%s)", lang))
 		} else {
 			trackAction = "selected for COPY."
 			args = append(args, fmt.Sprintf("-c:a:%d", audiotrack), "copy")
@@ -328,7 +345,7 @@ func transcodeEAC3(infile string, readTracksFunc func(string) ([]trackInfo, erro
 	printHeader(fmt.Sprintf("File: %s\nList of input tracks", infile))
 
 	for _, track := range tracks {
-		log.Printf("  - ID: %d (%s), Codec: %s, Language: %s", track.ID, track.Type, track.CodecID, track.Properties.Language)
+		log.Printf("  - ID: %d (%s), Codec: %s, Language: %s, Channels: %d", track.ID, track.Type, track.CodecID, track.Properties.Language, track.Properties.AudioChannels)
 	}
 
 	// If pruning is enabled, filter tracks and check if any track type is completely removed.
@@ -340,7 +357,7 @@ func transcodeEAC3(infile string, readTracksFunc func(string) ([]trackInfo, erro
 		}
 	}
 
-	tcmd := transcoderCmd(infile, outputFile, tracksToProcess, *optPrune, *optLang)
+	tcmd := transcoderCmd(infile, outputFile, tracksToProcess, *optPrune, *optForceStereo, *optLang)
 	printHeader("Executing command")
 	log.Println("'" + strings.Join(tcmd, "' '") + "'")
 
@@ -359,11 +376,12 @@ func transcodeEAC3(infile string, readTracksFunc func(string) ([]trackInfo, erro
 	if err := os.Rename(outputFile, newOutputFile); err != nil {
 		return fmt.Errorf("failed to move '%s' to '%s': %v", outputFile, newOutputFile, err)
 	}
-	// If the input file is a .mp4 file. In this case, since we crated a mkv
-	// file during transcoding, rename it to .mkv
+	// If the input file is a .mp4 file. In this case, since we created a mkv
+	// file during transcoding, rename the original file to .mkv.
 	if extension == ".mp4" {
-		if err := os.Rename(infile, strings.TrimSuffix(infile, ".mp4")+".mkv"); err != nil {
-			return fmt.Errorf("failed to move '%s' to '%s': %v", outputFile, infile, err)
+		newName := strings.TrimSuffix(infile, ".mp4") + ".mkv"
+		if err := os.Rename(infile, newName); err != nil {
+			return fmt.Errorf("failed to rename original .mp4 file to '%s': %v", newName, err)
 		}
 	}
 	return nil
@@ -395,7 +413,7 @@ func findVideoFiles(dir string) ([]string, error) {
 // usage prints a customized usage message.
 func usage() {
 	progname := filepath.Base(os.Args[0])
-	fmt.Fprintf(os.Stderr, "Usage: %s [options] [<input_file.mkv> | --dir <directory>]\n\n", progname)
+	fmt.Fprintf(os.Stderr, "Usage: %s [options] [<input_file.mkv> | --input <input_file.mkv> | --dir <directory>]\n\n", progname)
 	fmt.Fprintln(os.Stderr, "Options:")
 	flag.PrintDefaults()
 }
@@ -408,6 +426,11 @@ func main() {
 
 	flag.Usage = usage
 	flag.Parse()
+
+	// If a positional argument is provided, use it as the input file.
+	if flag.NArg() > 0 && *optFile == "" {
+		*optFile = flag.Arg(0)
+	}
 
 	if (*optDir == "" && *optFile == "") || (*optDir != "" && *optFile != "") {
 		flag.Usage()
